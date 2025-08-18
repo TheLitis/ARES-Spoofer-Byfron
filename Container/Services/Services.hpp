@@ -5,6 +5,13 @@
 
 #include "Defs.h"
 
+#include "../Header/Installer.h"
+#include "../Header/TraceCleaner.h"
+#include "../Header/Registry.h"
+#include "../Header/WMI.h"
+#include "../Header/Watchdog.h"
+#include "../Header/Mac.h"
+
 #include <Windows.h>
 #include <TlHelp32.h>
 #include <shlobj.h>
@@ -67,19 +74,18 @@ namespace TsService {
     }
 
     inline std::string genMac() {
+        static thread_local std::mt19937 gen{ std::random_device{}() };
         std::uniform_int_distribution<int> dist(0, 255);
 
-        std::array<unsigned char, 6> mac = {};
-        for (auto& byte : mac) {
-            byte = static_cast<unsigned char>(dist(gen));
-        }
-        mac[0] &= 0xFE;
+        std::array<unsigned char, 6> mac{};
+        for (auto& b : mac) b = static_cast<unsigned char>(dist(gen));
 
-        char macStr[18];
-        snprintf(macStr, sizeof(macStr), "%02X:%02X:%02X:%02X:%02X:%02X",
+        mac[0] = static_cast<unsigned char>((mac[0] & 0xFE) | 0x02); // unicast + locally administered
+
+        char buf[13];
+        std::snprintf(buf, sizeof(buf), "%02X%02X%02X%02X%02X%02X",
             mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]);
-
-        return std::string(macStr);
+        return std::string(buf);
     }
 
     inline std::string genGUID() {
@@ -364,29 +370,44 @@ namespace TsService {
         }
     }
 
-    inline bool EnableDebugPrivilege() {
-        HANDLE hToken;
-        TOKEN_PRIVILEGES tokenPrivileges = { 0 };
+    inline bool TsAdjustAccess() {
+        HANDLE hToken = nullptr;
+        LUID luid;
+        TOKEN_PRIVILEGES tp = { 0 };
 
         if (!OpenProcessToken(GetCurrentProcess(), TOKEN_ADJUST_PRIVILEGES | TOKEN_QUERY, &hToken)) {
             return false;
         }
 
-        if (!LookupPrivilegeValueW(nullptr, SE_DEBUG_NAME, &tokenPrivileges.Privileges[0].Luid)) {
-            CloseHandle(hToken);
-            return false;
-        }
+        const std::vector<LPCWSTR> privileges = {
+            SE_DEBUG_NAME,
+            SE_BACKUP_NAME,
+            SE_RESTORE_NAME
+        };
 
-        tokenPrivileges.PrivilegeCount = 1;
-        tokenPrivileges.Privileges[0].Attributes = SE_PRIVILEGE_ENABLED;
-        if (!AdjustTokenPrivileges(hToken, FALSE, &tokenPrivileges, sizeof(TOKEN_PRIVILEGES), nullptr, nullptr)) {
-            CloseHandle(hToken);
-            return false;
+        for (const auto& priv : privileges) {
+            if (!LookupPrivilegeValueW(nullptr, priv, &luid)) {
+                CloseHandle(hToken);
+                return false;
+            }
+
+            tp.PrivilegeCount = 1;
+            tp.Privileges[0].Luid = luid;
+            tp.Privileges[0].Attributes = SE_PRIVILEGE_ENABLED;
+
+            if (!AdjustTokenPrivileges(hToken, FALSE, &tp, sizeof(TOKEN_PRIVILEGES), nullptr, nullptr)) {
+                CloseHandle(hToken);
+                return false;
+            }
+
+            if (GetLastError() != ERROR_SUCCESS) {
+                CloseHandle(hToken);
+                return false;
+            }
         }
 
         CloseHandle(hToken);
-
-        return GetLastError() == ERROR_SUCCESS;
+        return true;
     }
 
     inline void SetWindow() {
@@ -394,30 +415,59 @@ namespace TsService {
         if (!SetConsoleTitleW(rndName.c_str())) {}
     }
 
+    static NtQuerySystemInformation_t pNtQuerySystemInformation =
+        (NtQuerySystemInformation_t)GetProcAddress(
+            GetModuleHandleW(L"ntdll.dll"),
+            "NtQuerySystemInformation");
+
+    static NtDuplicateObject_t pNtDuplicateObject =
+        (NtDuplicateObject_t)GetProcAddress(
+            GetModuleHandleW(L"ntdll.dll"),
+            "NtDuplicateObject");
+
+    inline void ForceCloseHandles(HANDLE hProc, DWORD pid) {
+        if (!pNtQuerySystemInformation || !pNtDuplicateObject)
+            return;
+
+        ULONG len = 0;
+        pNtQuerySystemInformation(SystemHandleInformation, nullptr, 0, &len);
+        auto buf = (PSYSTEM_HANDLE_INFORMATION)malloc(len);
+        if (!buf) return;
+
+        if (NT_SUCCESS(pNtQuerySystemInformation(SystemHandleInformation, buf, len, &len))) {
+            for (ULONG i = 0; i < buf->HandleCount; i++) {
+                auto h = buf->Handles[i];
+                if (h.ProcessId == pid) {
+                    HANDLE dup = nullptr;
+                    if (NT_SUCCESS(pNtDuplicateObject(hProc,
+                        (HANDLE)(ULONG_PTR)h.HandleValue,
+                        GetCurrentProcess(),
+                        &dup,
+                        0, 0,
+                        DUPLICATE_CLOSE_SOURCE))) {
+                        if (dup) CloseHandle(dup);
+                    }
+                }
+            }
+        }
+        free(buf);
+    }
+
     inline void __TerminateRoblox() {
         SetWindow();
-        EnableDebugPrivilege();
 
-        const std::wstring_view names[] = { L"RobloxPlayerBeta.exe", L"RobloxCrashHandler.exe", L"Bloxstrap.exe", L"RobloxStudioBetaLauncher.exe", L"RobloxStudioBeta.exe" };
-        const std::wstring_view titles = L"Roblox";
+        const std::wstring_view names[] = {
+            L"RobloxPlayerBeta.exe",
+            L"RobloxCrashHandler.exe",
+            L"Bloxstrap.exe",
+            L"RobloxStudioBetaLauncher.exe",
+            L"RobloxStudioBeta.exe"
+        };
 
         auto NtTerminateProcess = SeTerminateProcess();
         if (!NtTerminateProcess) return;
 
-        HWND hwnd = FindWindowW(nullptr, titles.data());
-        if (hwnd) {
-            DWORD pid = 0;
-            GetWindowThreadProcessId(hwnd, &pid);
-            if (pid) {
-                HANDLE hProcess = OpenProcess(PROCESS_TERMINATE | SYNCHRONIZE, FALSE, pid);
-                if (hProcess) {
-                    NtTerminateProcess(hProcess, 0);
-                    WaitForSingleObjectEx(hProcess, INFINITE, TRUE);
-                    CloseHandle(hProcess);
-                }
-            }
-        }
-
+        // Snapshot processes
         HANDLE snapshot = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
         if (snapshot == INVALID_HANDLE_VALUE) return;
 
@@ -430,9 +480,12 @@ namespace TsService {
                     if (target == entry.szExeFile) {
                         HANDLE hProcess = OpenProcess(PROCESS_ALL_ACCESS, FALSE, entry.th32ProcessID);
                         if (hProcess) {
+                            ForceCloseHandles(hProcess, entry.th32ProcessID);
+
                             if (std::wstring(entry.szExeFile) == L"RobloxPlayerBeta.exe") {
                                 HMODULE hNtdll = GetModuleHandleW(L"ntdll.dll");
-                                auto NtUnmapViewOfSection = (pNtUnmapViewOfSection)GetProcAddress(hNtdll, "NtUnmapViewOfSection");
+                                auto NtUnmapViewOfSection =
+                                    (pNtUnmapViewOfSection)GetProcAddress(hNtdll, "NtUnmapViewOfSection");
 
                                 if (NtUnmapViewOfSection) {
                                     MEMORY_BASIC_INFORMATION mbi = { 0 };
@@ -442,7 +495,9 @@ namespace TsService {
                                         if (mbi.State == MEM_COMMIT && mbi.Type == MEM_IMAGE) {
                                             NtUnmapViewOfSection(hProcess, mbi.BaseAddress);
                                         }
-                                        baseAddress = reinterpret_cast<PVOID>(reinterpret_cast<uintptr_t>(mbi.BaseAddress) + mbi.RegionSize);
+                                        baseAddress = reinterpret_cast<PVOID>(
+                                            reinterpret_cast<uintptr_t>(mbi.BaseAddress) + mbi.RegionSize
+                                            );
                                     }
                                 }
                             }
@@ -458,20 +513,6 @@ namespace TsService {
         for (HANDLE hProcess : processHandles) {
             WaitForSingleObjectEx(hProcess, INFINITE, TRUE);
             CloseHandle(hProcess);
-        }
-
-        snapshot = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
-        if (snapshot != INVALID_HANDLE_VALUE) {
-            if (Process32FirstW(snapshot, &entry)) {
-                do {
-                    for (const auto& target : names) {
-                        if (target == entry.szExeFile) {
-                            // ???
-                        }
-                    }
-                } while (Process32NextW(snapshot, &entry));
-            }
-            CloseHandle(snapshot);
         }
     }
 

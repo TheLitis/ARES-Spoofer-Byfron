@@ -11,7 +11,7 @@
 
 namespace fs = std::filesystem;
 
-namespace { // ===== internal only =====
+namespace {
 
     struct PathHelper {
         static std::wstring user() { return TsService::GetUser(); }
@@ -49,7 +49,6 @@ namespace { // ===== internal only =====
         }
     }
 
-    // INTERNAL: do NOT expose; used only by Run()
     void RmvReferents(const fs::path& filePath, const std::wstring& itemClass) {
         if (!fs::exists(filePath))
             throw std::runtime_error("File does not exist: " + filePath.string());
@@ -74,44 +73,60 @@ namespace { // ===== internal only =====
         out << content;
     }
 
-    // INTERNAL: the original Roblox/Bloxstrap/Fishstrap clean flow
     void CleanRbx() {
-        // Roblox via shortcut (to locate Versions root)
+        fs::path userBase = fs::path(PathHelper::user()) / L"AppData/Local/Roblox";
+
         if (auto robLnk = PathHelper::resolveShortcut(L"Roblox Player.lnk")) {
             cleanVers(robLnk->parent_path().parent_path());
         }
-        // Standard Roblox path
+
         cleanVers(fs::path(PathHelper::sys()) / L"Program Files (x86)/Roblox/Versions");
 
-        // Bloxstrap via shortcut
         if (auto bxLnk = PathHelper::resolveShortcut(L"Bloxstrap.lnk")) {
             cleanVers(bxLnk->parent_path() / L"Versions");
         }
-        // Standard Bloxstrap path
+
         cleanVers(fs::path(PathHelper::user()) / L"AppData/Local/Bloxstrap/Versions");
 
-        // Fishstrap via shortcut
         if (auto fsLnk = PathHelper::resolveShortcut(L"Fishstrap.lnk")) {
             cleanVers(fsLnk->parent_path() / L"Versions");
         }
-        // Standard Fishstrap path
+
         cleanVers(fs::path(PathHelper::user()) / L"AppData/Local/Fishstrap/Versions");
 
-        // Temp + logs
-        fs::remove_all(fs::path(PathHelper::user()) / L"AppData/Local/Temp/Roblox");
-        fs::path logs = fs::path(PathHelper::user()) / L"AppData/Local/Roblox";
+        std::vector<std::wstring> dirsToDelete = {
+            L"Temp/Roblox",
+            L"Roblox/logs",
+            L"Roblox/LocalStorage",
+            L"Roblox/Downloads",
+            L"Roblox/ClientSettings",
+            L"Roblox/rbx-storage",
+            L"Roblox/Versions"
+        };
 
-        for (const std::wstring& sub : { L"logs", L"LocalStorage", L"Downloads" }) {
-            fs::remove_all(logs / sub);
-            std::wcout << L"Deleted -> " << (logs / sub) << std::endl;
+        for (const auto& sub : dirsToDelete) {
+            fs::remove_all(fs::path(PathHelper::user()) / L"AppData/Local" / sub);
+            std::wcout << L"Deleted -> " << fs::path(PathHelper::user()) / L"AppData/Local" / sub << std::endl;
         }
 
-        // Referent scrubbing (INTERNAL)
-        RmvReferents(logs / L"AnalysticsSettings.xml", L"GoogleAnalyticsConfiguration");
-        RmvReferents(logs / L"GlobalBasicSettings_13.xml", L"UserGameSettings");
-    }
+        std::vector<std::wstring> filesToDelete = {
+            L"rbx-storage.db",
+            L"rbx-storage.db-shm",
+            L"rbx-storage.db-wal",
+            L"rbx-storage.id",
+            L"frm.cfg"
+        };
 
-} // anonymous namespace
+        for (const auto& file : filesToDelete) {
+            fs::remove(fs::path(userBase) / file);
+            std::wcout << L"Deleted -> " << (userBase / file) << std::endl;
+        }
+
+        RmvReferents(userBase / L"GlobalBasicSettings_13.xml", L"UserGameSettings");
+        RmvReferents(userBase / L"GlobalSettings_13.xml", L"UserGameSettings");
+        RmvReferents(userBase / L"AnalysticsSettings.xml", L"GoogleAnalyticsConfiguration");
+    }
+}
 
 namespace TraceCleaner {
     void run() {

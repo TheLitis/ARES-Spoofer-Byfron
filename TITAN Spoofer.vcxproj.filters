@@ -18,15 +18,15 @@
     <Filter Include="Container\Header">
       <UniqueIdentifier>{3ebd4dfc-43e0-48ef-9ee7-2652686fa565}</UniqueIdentifier>
     </Filter>
+    <Filter Include="Container\System">
+      <UniqueIdentifier>{890dddda-0258-4f71-b1c1-2d9cb46abc6f}</UniqueIdentifier>
+    </Filter>
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="Container\Services\Defs.h">
       <Filter>Container\Util</Filter>
     </ClInclude>
     <ClInclude Include="Container\Services\Services.hpp">
-      <Filter>Container\Util</Filter>
-    </ClInclude>
-    <ClInclude Include="TITAN.h">
       <Filter>Container\Util</Filter>
     </ClInclude>
     <ClInclude Include="Container\Header\Installer.h">
@@ -47,14 +47,14 @@
     <ClInclude Include="Container\Header\COM.h">
       <Filter>Container\Header</Filter>
     </ClInclude>
-    <ClInclude Include="Container\Header\Notify.h">
-      <Filter>Container\Header</Filter>
-    </ClInclude>
     <ClInclude Include="Container\Header\TraceCleaner.h">
       <Filter>Container\Header</Filter>
     </ClInclude>
-    <ClInclude Include="Container\Header\Mask.h">
+    <ClInclude Include="Container\Header\pMask.h">
       <Filter>Container\Header</Filter>
+    </ClInclude>
+    <ClInclude Include="Container\System\Notify.h">
+      <Filter>Container\System</Filter>
     </ClInclude>
   </ItemGroup>
   <ItemGroup>
@@ -74,17 +74,17 @@
     <ClCompile Include="Container\Core\WMI.cpp">
       <Filter>Container\Core</Filter>
     </ClCompile>
-    <ClCompile Include="Container\Core\Notify.cpp">
-      <Filter>Container\Core</Filter>
-    </ClCompile>
     <ClCompile Include="Container\Core\Installer.cpp">
       <Filter>Container\Core</Filter>
     </ClCompile>
     <ClCompile Include="Container\Core\TraceCleaner.cpp">
       <Filter>Container\Core</Filter>
     </ClCompile>
-    <ClCompile Include="Container\Core\Mask.cpp">
+    <ClCompile Include="Container\Core\pMask.cpp">
       <Filter>Container\Core</Filter>
+    </ClCompile>
+    <ClCompile Include="Container\System\Notify.cpp">
+      <Filter>Container\System</Filter>
     </ClCompile>
   </ItemGroup>
   <ItemGroup>

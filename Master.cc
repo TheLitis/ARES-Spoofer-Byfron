@@ -1,17 +1,22 @@
 ﻿#include "Container/Services/Services.hpp"
+
 #include "Container/Header/TraceCleaner.h"
 #include "Container/Header/Installer.h"
 #include "Container/Header/Mac.h"
 #include "Container/Header/Registry.h"
 #include "Container/Header/WMI.h"
 #include "Container/Header/Watchdog.h"
-#include "Container/Header/Notify.h"
-#include "Container/Header/Mask.h"
+#include "Container/Header/pMask.h"
+
+#include "Container/System/Notify.h"
+#include "Container/System/Tray.h"
 
 #include <iostream>
 #include <thread>
 
 int TsRun(bool quiet) {
+
+    TITAN::TsBlockHandle guard;
 
     if (TITAN::Notification::HandleProtocolIfPresentAndExitEarly()) {
         return 0;
@@ -27,38 +32,18 @@ int TsRun(bool quiet) {
     wd.setOnAllExited([&]() {
         wd.pause();
 
-        HANDLE hYes = CreateEventW(nullptr, TRUE, FALSE, L"Local\\TITAN_SPOOF_YES");
-        HANDLE hDismiss = CreateEventW(nullptr, TRUE, FALSE, L"Local\\TITAN_SPOOF_DISMISS");
-        HANDLE handles[2] = { hYes, hDismiss };
-
-        notif.NotifyDesktop(
-            L"Roblox closed",
-            L"Would you like to spoof?",
-            {
-                {L"Yes",     L"spoof"},
-                {L"Dismiss", L"dismiss"}
-            });
-
-        DWORD wait = WaitForMultipleObjects(2, handles, FALSE, 120000);
-        bool spoofAgreed = (wait == WAIT_OBJECT_0);
-
-        if (hYes)     CloseHandle(hYes);
-        if (hDismiss) CloseHandle(hDismiss);
-
-        if (spoofAgreed) {
+        bool agreed = false;
+        if (notif.PromptSpoofConsentAndWait(agreed) && agreed) {
             bool success = true;
             try {
                 TsService::__TerminateRoblox();
-
                 TraceCleaner::run();
                 MAC::MacSpoofer::run();
                 Registry::RegSpoofer::run();
                 WMI::WmiSpoofer::run();
-
                 Installer::Install(wd);
 
                 std::this_thread::sleep_for(std::chrono::seconds(3));
-
                 TsService::__TerminateRoblox();
             }
             catch (...) {
@@ -67,12 +52,12 @@ int TsRun(bool quiet) {
 
             notif.NotifyDesktop(
                 success ? L"Spoof complete" : L"Spoof failed",
-                success ? L"All operations successful."
+                success ? L"Done."
                 : L"One or more operations failed.");
         }
 
         wd.resume();
-        });
+     });
 
     if (!wd.start()) {
         if (!quiet)
@@ -88,6 +73,7 @@ int TsRun(bool quiet) {
     }
 
     wd.stop();
+
     return 0;
 }
 
@@ -115,10 +101,14 @@ int SafeRun(bool quiet) {
 
 // Release (no-console)
 int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int) {
+    TsService::TsAdjustAccess();
+
     return TsRun(true);
 }
 
 // Debug (console)
 int main() {
+    TsService::TsAdjustAccess();
+
     return SafeRun(false);
 }

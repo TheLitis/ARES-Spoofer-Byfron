@@ -162,7 +162,18 @@ namespace {
     {
         HANDLE hVol = OpenVolumeHandle(drive);
         if (!hVol) {
-            errOut = L"CreateFile on volume failed: " + std::to_wstring(drive) + L":  " + FormatWinErr(GetLastError());
+            errOut = L"CreateFile on volume failed for drive " + std::wstring(1, drive) + L": " + FormatWinErr(GetLastError());
+            return false;
+        }
+
+        USN_JOURNAL_DATA_V0 journalData{};
+        DWORD bytesRet = 0;
+        if (!DeviceIoControl(hVol, FSCTL_QUERY_USN_JOURNAL, nullptr, 0,
+            &journalData, sizeof(journalData), &bytesRet, nullptr))
+        {
+            DWORD err = GetLastError();
+            errOut = L"USN Journal not present on " + std::wstring(1, drive) + L": " + FormatWinErr(err);
+            CloseHandle(hVol);
             return false;
         }
 
@@ -174,11 +185,10 @@ namespace {
         std::vector<BYTE> buf(1 << 20); // 1MB
         DWORD bytes = 0;
         bool any = false;
-        DWORD lastIoErr = 0;
 
         while (DeviceIoControl(hVol, FSCTL_ENUM_USN_DATA,
             &med, sizeof(med),
-            buf.data(), (DWORD)buf.size(),
+            buf.data(), static_cast<DWORD>(buf.size()),
             &bytes, nullptr))
         {
             any = true;
@@ -187,11 +197,11 @@ namespace {
             DWORD pos = sizeof(USN);
             ParsedUSN rec{};
             while (ParseOneUSNRecord(buf.data(), bytes, pos, rec)) {
-
                 if (rec.isDir) {
                     dirMap.emplace(rec.frn, DirNode{ rec.parent, std::wstring(rec.name) });
                     continue;
                 }
+
                 if (ieq(rec.name, L"Bloxstrap.exe")) {
                     matches.push_back({ drive, rec.parent, std::wstring(rec.name), Target::Bloxstrap });
                 }
@@ -203,19 +213,17 @@ namespace {
                 }
             }
 
-            // Advance to next chunk
+            // Advance
             med.StartFileReferenceNumber = *reinterpret_cast<USN*>(buf.data());
         }
 
+        DWORD lastErr = GetLastError();
         if (!any) {
-            lastIoErr = GetLastError();
-            if (lastIoErr != 0) {
-                errOut = L"FSCTL_ENUM_USN_DATA failed: " + FormatWinErr(lastIoErr)
-                    + L" (drive " + std::wstring(1, drive) + L":)";
+            if (lastErr == ERROR_INVALID_PARAMETER) {
+                errOut = L"FSCTL_ENUM_USN_DATA failed on drive " + std::wstring(1, drive) + L": USN Journal not properly configured.";
             }
             else {
-                errOut = L"FSCTL_ENUM_USN_DATA returned no data (drive "
-                    + std::wstring(1, drive) + L":)";
+                errOut = L"FSCTL_ENUM_USN_DATA failed on drive " + std::wstring(1, drive) + L": " + FormatWinErr(lastErr);
             }
         }
 

@@ -23,9 +23,6 @@
     <ClCompile Include="..\Container\Core\Mac.cpp">
       <Filter>Core</Filter>
     </ClCompile>
-    <ClCompile Include="..\Container\Core\Notify.cpp">
-      <Filter>Core</Filter>
-    </ClCompile>
     <ClCompile Include="..\Container\Core\Registry.cpp">
       <Filter>Core</Filter>
     </ClCompile>

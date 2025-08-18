@@ -73,12 +73,12 @@
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">
     <OutDir>$(SolutionDir)$(Configuration)\</OutDir>
     <IntDir>Intermediate\$(Platform)\$(Configuration)\</IntDir>
-    <TargetName>tsspf</TargetName>
+    <TargetName>tspf</TargetName>
   </PropertyGroup>
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
     <OutDir>$(SolutionDir)$(Configuration)\</OutDir>
     <IntDir>Intermediate\$(Platform)\$(Configuration)\</IntDir>
-    <TargetName>tsspf</TargetName>
+    <TargetName>tspf</TargetName>
   </PropertyGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">
     <ClCompile>
@@ -121,6 +121,7 @@
     <Link>
       <SubSystem>Console</SubSystem>
       <GenerateDebugInformation>true</GenerateDebugInformation>
+      <UACExecutionLevel>RequireAdministrator</UACExecutionLevel>
     </Link>
   </ItemDefinitionGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
@@ -152,29 +153,28 @@
     </Link>
   </ItemDefinitionGroup>
   <ItemGroup>
-    <ClInclude Include="Container\Header\Mask.h" />
-    <ClInclude Include="Container\Header\Notify.h" />
     <ClInclude Include="Container\Header\COM.h" />
     <ClInclude Include="Container\Header\Installer.h" />
     <ClInclude Include="Container\Header\Mac.h" />
+    <ClInclude Include="Container\Header\pMask.h" />
     <ClInclude Include="Container\Header\Registry.h" />
     <ClInclude Include="Container\Header\TraceCleaner.h" />
     <ClInclude Include="Container\Header\Watchdog.h" />
     <ClInclude Include="Container\Header\WMI.h" />
     <ClInclude Include="Container\Services\Defs.h" />
     <ClInclude Include="Container\Services\Services.hpp" />
-    <ClInclude Include="TITAN.h" />
+    <ClInclude Include="Container\System\Notify.h" />
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="Container\Core\Installer.cpp" />
-    <ClCompile Include="Container\Core\Mask.cpp" />
-    <ClCompile Include="Container\Core\Notify.cpp" />
     <ClCompile Include="Container\Core\COM.cpp" />
     <ClCompile Include="Container\Core\Mac.cpp" />
+    <ClCompile Include="Container\Core\pMask.cpp" />
     <ClCompile Include="Container\Core\Registry.cpp" />
     <ClCompile Include="Container\Core\TraceCleaner.cpp" />
     <ClCompile Include="Container\Core\Watchdog.cpp" />
     <ClCompile Include="Container\Core\WMI.cpp" />
+    <ClCompile Include="Container\System\Notify.cpp" />
     <ClCompile Include="Master.cc" />
   </ItemGroup>
   <ItemGroup>

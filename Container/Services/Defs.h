@@ -48,11 +48,32 @@ typedef struct _OBJECT_ATTRIBUTES {
 } OBJECT_ATTRIBUTES, * POBJECT_ATTRIBUTES;
 #endif
 
+#ifndef _KEY_INFORMATION_CLASS_DEFINED
+#define _KEY_INFORMATION_CLASS_DEFINED
 typedef enum _KEY_INFORMATION_CLASS {
     KeyBasicInformation = 0,
     KeyNodeInformation = 1,
     KeyFullInformation = 2,
+    KeyNameInformation = 3,
+    KeyCachedInformation = 4,
+    KeyFlagsInformation = 5,
+    KeyVirtualizationInformation = 6,
+    KeyHandleTagsInformation = 7,
+    KeyTrustInformation = 8,
+    KeyLayerInformation = 9,
+    MaxKeyInfoClass
 } KEY_INFORMATION_CLASS;
+#endif
+
+#ifndef _KEY_BASIC_INFORMATION_DEFINED
+#define _KEY_BASIC_INFORMATION_DEFINED
+typedef struct _KEY_BASIC_INFORMATION {
+    LARGE_INTEGER LastWriteTime;
+    ULONG TitleIndex;
+    ULONG NameLength;
+    WCHAR Name[1];
+} KEY_BASIC_INFORMATION, * PKEY_BASIC_INFORMATION;
+#endif
 
 #ifndef _KEY_FULL_INFORMATION_DEFINED
 #define _KEY_FULL_INFORMATION_DEFINED
@@ -114,5 +135,44 @@ using NtQueryKey_t = NTSTATUS(NTAPI*)(HANDLE, KEY_INFORMATION_CLASS, PVOID, ULON
 using NtQueryValueKey_t = NTSTATUS(NTAPI*)(HANDLE, PUNICODE_STRING, KEY_VALUE_INFORMATION_CLASS, PVOID, ULONG, PULONG);
 using NtSetValueKey_t = NTSTATUS(NTAPI*)(HANDLE, PUNICODE_STRING, ULONG, ULONG, const void*, ULONG);
 using NtEnumerateKey_t = NTSTATUS(NTAPI*)(HANDLE, ULONG, KEY_INFORMATION_CLASS, PVOID, ULONG, PULONG);
+
+typedef enum _SYSTEM_INFORMATION_CLASS {
+    SystemBasicInformation = 0,
+    SystemHandleInformation = 16,
+    // extend if you need other info classes
+} SYSTEM_INFORMATION_CLASS;
+
+// ===== System Handle Structures =====
+typedef struct _SYSTEM_HANDLE {
+    ULONG       ProcessId;          // PID that owns the handle
+    UCHAR       ObjectTypeNumber;   // internal type index
+    UCHAR       Flags;              // flags (inherit, protect, etc.)
+    USHORT      HandleValue;        // the actual handle value
+    PVOID       Object;             // pointer to the kernel object
+    ACCESS_MASK GrantedAccess;      // access rights mask
+} SYSTEM_HANDLE, * PSYSTEM_HANDLE;
+
+typedef struct _SYSTEM_HANDLE_INFORMATION {
+    ULONG         HandleCount;
+    SYSTEM_HANDLE Handles[1];       // variable-length array
+} SYSTEM_HANDLE_INFORMATION, * PSYSTEM_HANDLE_INFORMATION;
+
+// ===== Function typedefs =====
+using NtQuerySystemInformation_t = NTSTATUS(NTAPI*)(
+    SYSTEM_INFORMATION_CLASS SystemInformationClass,
+    PVOID                    SystemInformation,
+    ULONG                    SystemInformationLength,
+    PULONG                   ReturnLength
+    );
+
+using NtDuplicateObject_t = NTSTATUS(NTAPI*)(
+    HANDLE      SourceProcessHandle,
+    HANDLE      SourceHandle,
+    HANDLE      TargetProcessHandle,
+    PHANDLE     TargetHandle,
+    ACCESS_MASK DesiredAccess,
+    ULONG       HandleAttributes,
+    ULONG       Options
+    );
 
 #endif // DEFS_H

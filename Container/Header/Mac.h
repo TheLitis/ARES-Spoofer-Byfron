@@ -12,6 +12,7 @@
 #include <mutex>
 #include <vector>
 #include <string>
+#include <optional>
 #include <iostream>
 
 #pragma comment(lib, "wbemuuid.lib")

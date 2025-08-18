@@ -1,4 +1,4 @@
-#include "../Header/Notify.h"
+#include "Notify.h"
 
 #include <windows.h>
 #include <roapi.h>
@@ -30,10 +30,9 @@ namespace TITAN {
         SetCurrentProcessExplicitAppUserModelID(appId.c_str());
     }
 
-    // ---------- constants for simple IPC via named events ----------
     static constexpr wchar_t kEventYes[] = L"Local\\TITAN_SPOOF_YES";
     static constexpr wchar_t kEventDismiss[] = L"Local\\TITAN_SPOOF_DISMISS";
-    static constexpr wchar_t kScheme[] = L"titan-notify"; // URL scheme we register
+    static constexpr wchar_t kScheme[] = L"titan-notify";
 
     Notification::Notification(std::wstring appId, std::wstring appName)
         : appId_(std::move(appId)), appName_(std::move(appName)) {
@@ -48,7 +47,7 @@ namespace TITAN {
         if (!ensureCOM_())  return false;
         SetProcessAumid(appId_);
         shortcutOk_ = ensureShortcut_();
-        if (!ensureUrlProtocol_()) return false;   // <-- ensure titan-notify: is registered
+        if (!ensureUrlProtocol_()) return false;
         return ensureWinRT_();
     }
 
@@ -162,7 +161,6 @@ namespace TITAN {
         }
     }
 
-    // Start Menu\Programs shortcut with AppUserModelID
     bool Notification::ensureShortcut_() {
         PWSTR programsPath = nullptr;
         if (FAILED(SHGetKnownFolderPath(FOLDERID_Programs, 0, nullptr, &programsPath))) {
@@ -263,11 +261,15 @@ namespace TITAN {
 
         if (argv && argc >= 2) {
             std::wstring arg = argv[1];
-            // Accept titan-notify:<anything>
-            if (arg.rfind(kScheme, 0) == 0 && arg.size() > wcslen(kScheme) + 1 && arg[wcslen(kScheme)] == L':') {
-                // crude parse: look for "spoof" or "dismiss"
+
+            if (arg.rfind(kScheme, 0) == 0 && arg.size() >= wcslen(kScheme)) {
                 DWORD access = EVENT_MODIFY_STATE;
-                if (arg.find(L"spoof") != std::wstring::npos) {
+
+                if (arg.size() == wcslen(kScheme) + 1 && arg[wcslen(kScheme)] == L':') {
+                    // this used to be a bug
+                    handled = true;
+                }
+                else if (arg.find(L"spoof") != std::wstring::npos) {
                     if (HANDLE h = OpenEventW(access, FALSE, kEventYes)) {
                         SetEvent(h);
                         CloseHandle(h);
@@ -303,4 +305,31 @@ namespace TITAN {
         return out;
     }
 
-} // namespace TITAN
+    bool Notification::PromptSpoofConsentAndWait(bool& agreed) {
+        HANDLE hYes = CreateEventW(nullptr, TRUE, FALSE, L"Local\\TITAN_SPOOF_YES");
+        HANDLE hDismiss = CreateEventW(nullptr, TRUE, FALSE, L"Local\\TITAN_SPOOF_DISMISS");
+
+        if (!hYes || !hDismiss) {
+            if (hYes) CloseHandle(hYes);
+            if (hDismiss) CloseHandle(hDismiss);
+            return false;
+        }
+
+        HANDLE handles[2] = { hYes, hDismiss };
+
+        NotifyDesktop(
+            L"Roblox closed",
+            L"Spoof?",
+            {
+                { L"Yes", L"spoof" },
+                { L"Dismiss", L"dismiss" }
+            });
+
+        DWORD wait = WaitForMultipleObjects(2, handles, FALSE, 120000);
+        agreed = (wait == WAIT_OBJECT_0);
+
+        CloseHandle(hYes);
+        CloseHandle(hDismiss);
+        return true;
+    }
+}

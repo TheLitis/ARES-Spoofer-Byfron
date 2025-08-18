@@ -26,7 +26,7 @@ if %errorlevel% equ 0 (
 :: ───────────────────────────────
 :: Create Startup Task
 :: ───────────────────────────────
-set "exe_path=%~dp0TITAN Spoofer.exe"
+set "exe_path=%~dp0tspf.exe"
 
 schtasks /create /tn "TITAN Agent" /tr "\"%exe_path%\"" /sc onlogon /rl highest /f
 if %errorlevel% neq 0 (

@@ -19,6 +19,7 @@ namespace TITAN {
         // Call at program start. If this instance was launched via titan-notify: URL,
         // it signals the primary instance and returns true (caller should exit).
         static bool HandleProtocolIfPresentAndExitEarly();
+        bool PromptSpoofConsentAndWait(bool& agreed);
 
     private:
         bool ensureShortcut_();
@@ -37,4 +38,4 @@ namespace TITAN {
         bool shortcutOk_{ false };
     };
 
-} // namespace TITAN
+}

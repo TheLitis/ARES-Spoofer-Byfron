@@ -71,12 +71,12 @@
   </ImportGroup>
   <PropertyGroup Label="UserMacros" />
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">
-    <TargetName>tsspf</TargetName>
+    <TargetName>tspf</TargetName>
     <OutDir>$(SolutionDir)$(Configuration)\</OutDir>
     <IntDir>Intermediate\$(Platform)\$(Configuration)\</IntDir>
   </PropertyGroup>
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
-    <TargetName>tsspf</TargetName>
+    <TargetName>tspf</TargetName>
     <OutDir>$(SolutionDir)$(Configuration)\</OutDir>
     <IntDir>Intermediate\$(Platform)\$(Configuration)\</IntDir>
   </PropertyGroup>
@@ -149,7 +149,6 @@
     <ClCompile Include="..\Container\Core\COM.cpp" />
     <ClCompile Include="..\Container\Core\Installer.cpp" />
     <ClCompile Include="..\Container\Core\Mac.cpp" />
-    <ClCompile Include="..\Container\Core\Notify.cpp" />
     <ClCompile Include="..\Container\Core\Registry.cpp" />
     <ClCompile Include="..\Container\Core\TraceCleaner.cpp" />
     <ClCompile Include="..\Container\Core\Watchdog.cpp" />
