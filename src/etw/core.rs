@@ -238,6 +238,68 @@ fn query_process_path(pid: u32) -> Option<String> {
     }
 }
 
+struct EtwPropsBuf {
+    buf: Vec<u8>,
+    name_w: Vec<u16>,
+}
+
+impl EtwPropsBuf {
+    fn realtime(name: &str) -> io::Result<Self> {
+        let name_w = name.encode_utf16().chain([0]).collect::<Vec<u16>>();
+        Self::from_name_w(&name_w)
+    }
+
+    fn from_name_w(name_w: &[u16]) -> io::Result<Self> {
+        let props_size = mem::size_of::<EVENT_TRACE_PROPERTIES>();
+        let name_bytes = name_w
+            .len()
+            .checked_mul(mem::size_of::<u16>())
+            .ok_or_else(|| io::Error::other("ETW logger name size overflow"))?;
+        let buf_size = props_size
+            .checked_add(name_bytes)
+            .ok_or_else(|| io::Error::other("ETW properties buffer size overflow"))?;
+
+        let buffer_size_u32 = u32::try_from(buf_size)
+            .map_err(|_| io::Error::other("ETW properties buffer exceeds u32"))?;
+        let props_size_u32 =
+            u32::try_from(props_size).map_err(|_| io::Error::other("props size overflow"))?;
+
+        let mut buf = vec![0u8; buf_size];
+        let props = buf.as_mut_ptr() as *mut EVENT_TRACE_PROPERTIES;
+
+        unsafe {
+            // ControlTrace docs want this structure zeroed before fields are set.
+            (*props).Wnode.BufferSize = buffer_size_u32;
+            (*props).Wnode.Guid = GUID::from_u128(0);
+            (*props).Wnode.Flags = WNODE_FLAG_TRACED_GUID;
+            (*props).Wnode.ClientContext = 1;
+
+            (*props).LogFileMode = EVENT_TRACE_REAL_TIME_MODE;
+            (*props).LogFileNameOffset = 0;
+            (*props).LoggerNameOffset = props_size_u32;
+
+            // Reserve valid storage for the logger name inside the properties buffer.
+            // StartTraceW will copy the session name here; ControlTraceW can also write
+            // session properties/statistics back into this buffer.
+            let name_dst = buf.as_mut_ptr().add(props_size) as *mut u16;
+            name_dst.copy_from_nonoverlapping(name_w.as_ptr(), name_w.len());
+        }
+
+        Ok(Self {
+            buf,
+            name_w: name_w.to_vec(),
+        })
+    }
+
+    fn props_ptr(&self) -> *mut EVENT_TRACE_PROPERTIES {
+        self.buf.as_ptr() as *mut EVENT_TRACE_PROPERTIES
+    }
+
+    fn name_ptr(&self) -> PCWSTR {
+        PCWSTR(self.name_w.as_ptr())
+    }
+}
+
 struct EtwSession {
     name_w: Vec<u16>,
     handle: CONTROLTRACE_HANDLE,
@@ -246,39 +308,21 @@ struct EtwSession {
 impl EtwSession {
     fn start(name: &str) -> io::Result<Self> {
         unsafe {
-            let name_w = name.encode_utf16().chain([0]).collect::<Vec<u16>>();
-
-            let props_size = mem::size_of::<EVENT_TRACE_PROPERTIES>();
-            let name_bytes = name_w
-                .len()
-                .checked_mul(mem::size_of::<u16>())
-                .ok_or_else(|| io::Error::other("ETW logger name size overflow"))?;
-            let buf_size = props_size
-                .checked_add(name_bytes)
-                .ok_or_else(|| io::Error::other("ETW properties buffer size overflow"))?;
-            let buffer_size_u32 = u32::try_from(buf_size)
-                .map_err(|_| io::Error::other("ETW properties buffer exceeds u32"))?;
-            let props_size_u32 =
-                u32::try_from(props_size).map_err(|_| io::Error::other("props size overflow"))?;
-            let mut buf = vec![0u8; buf_size];
-            let props = buf.as_mut_ptr() as *mut EVENT_TRACE_PROPERTIES;
-
-            (*props).Wnode.BufferSize = buffer_size_u32;
-            (*props).Wnode.Flags = WNODE_FLAG_TRACED_GUID;
-            (*props).LogFileMode = EVENT_TRACE_REAL_TIME_MODE;
-            (*props).LoggerNameOffset = props_size_u32;
-
-            let name_ptr = buf.as_mut_ptr().add((*props).LoggerNameOffset as usize) as *mut u16;
-
-            name_ptr.copy_from_nonoverlapping(name_w.as_ptr(), name_w.len());
-
+            // Best-effort cleanup of an orphaned session, using its own fresh properties buffer.
+            let stop_props = EtwPropsBuf::realtime(name)?;
             let pre_stop_status = ControlTraceW(
                 CONTROLTRACE_HANDLE { Value: 0 },
-                PCWSTR(name_ptr),
-                props,
+                stop_props.name_ptr(),
+                stop_props.props_ptr(),
                 EVENT_TRACE_CONTROL_STOP,
             );
+
             let preexisting_session_detected = pre_stop_status == WIN32_ERROR(0);
+            if preexisting_session_detected {
+                debug!("Existing ETW session detected, waiting for teardown");
+                wait_for_etw_session_gone(stop_props.name_w.as_ptr() as *mut u16);
+            }
+
             info!(
                 session_name = %name,
                 pre_stop_control_trace_result = pre_stop_status.0,
@@ -287,10 +331,18 @@ impl EtwSession {
                 "ETW pre-start ControlTraceW probe complete"
             );
 
+            // Fresh start buffer. Never reuse the stop/query buffer for StartTraceW.
+            let start_props = EtwPropsBuf::realtime(name)?;
             let mut handle = CONTROLTRACE_HANDLE::default();
 
-            let mut start_status = StartTraceW(&mut handle, PCWSTR(name_ptr), props);
+            let mut start_status = StartTraceW(
+                &mut handle,
+                start_props.name_ptr(),
+                start_props.props_ptr(),
+            );
+
             let mut killed_existing_session = preexisting_session_detected;
+
             info!(
                 session_name = %name,
                 start_tracew_result = start_status.0,
@@ -298,15 +350,20 @@ impl EtwSession {
                 "ETW StartTraceW returned"
             );
 
+            // Race fallback: another instance recreated the session between our stop and start.
             if start_status == WIN32_ERROR(ERROR_ALREADY_EXISTS.0) {
                 warn!("ETW session already exists; stopping previous session");
+
+                let retry_stop_props = EtwPropsBuf::realtime(name)?;
                 let stop_existing_status = ControlTraceW(
                     CONTROLTRACE_HANDLE { Value: 0 },
-                    PCWSTR(name_ptr),
-                    props,
+                    retry_stop_props.name_ptr(),
+                    retry_stop_props.props_ptr(),
                     EVENT_TRACE_CONTROL_STOP,
                 );
+
                 killed_existing_session = stop_existing_status == WIN32_ERROR(0);
+
                 info!(
                     session_name = %name,
                     stop_existing_control_trace_result = stop_existing_status.0,
@@ -314,7 +371,18 @@ impl EtwSession {
                     killed_existing_session,
                     "ETW existing session stop attempt complete"
                 );
-                start_status = StartTraceW(&mut handle, PCWSTR(name_ptr), props);
+
+                if killed_existing_session {
+                    wait_for_etw_session_gone(retry_stop_props.name_w.as_ptr() as *mut u16);
+                }
+
+                let retry_start_props = EtwPropsBuf::realtime(name)?;
+                start_status = StartTraceW(
+                    &mut handle,
+                    retry_start_props.name_ptr(),
+                    retry_start_props.props_ptr(),
+                );
+
                 info!(
                     session_name = %name,
                     start_tracew_retry_result = start_status.0,
@@ -339,7 +407,6 @@ impl EtwSession {
             }
 
             let provider = kernel_process_provider_guid();
-
             let params = ENABLE_TRACE_PARAMETERS {
                 Version: ENABLE_TRACE_PARAMETERS_VERSION,
                 ..Default::default()
@@ -355,6 +422,7 @@ impl EtwSession {
                 0,
                 Some(&params),
             );
+
             info!(
                 session_name = %name,
                 enable_trace_ex2_result = enable_status.0,
@@ -371,8 +439,15 @@ impl EtwSession {
                     enable_trace_ex2_status = %format_win32_status(enable_status),
                     "EnableTraceEx2 failed"
                 );
-                let stop_on_error_status =
-                    ControlTraceW(handle, PCWSTR(name_ptr), props, EVENT_TRACE_CONTROL_STOP);
+
+                let stop_on_error_props = EtwPropsBuf::realtime(name)?;
+                let stop_on_error_status = ControlTraceW(
+                    handle,
+                    stop_on_error_props.name_ptr(),
+                    stop_on_error_props.props_ptr(),
+                    EVENT_TRACE_CONTROL_STOP,
+                );
+
                 warn!(
                     session_name = %name,
                     stop_on_error_result = stop_on_error_status.0,
@@ -386,52 +461,39 @@ impl EtwSession {
                 )));
             }
 
+            let session_name_w = start_props.name_w.clone();
+
             info!(
                 session_name = %name,
                 preexisting_session_detected,
                 killed_existing_session,
                 "ETW session started"
             );
-            Ok(Self { name_w, handle })
+
+            Ok(Self {
+                name_w: session_name_w,
+                handle,
+            })
         }
     }
 
     fn stop(&self) -> io::Result<()> {
         unsafe {
-            let props_size = mem::size_of::<EVENT_TRACE_PROPERTIES>();
-            let name_bytes = self
-                .name_w
-                .len()
-                .checked_mul(mem::size_of::<u16>())
-                .ok_or_else(|| io::Error::other("ETW logger name size overflow"))?;
-            let buf_size = props_size
-                .checked_add(name_bytes)
-                .ok_or_else(|| io::Error::other("ETW properties buffer size overflow"))?;
-            let buffer_size_u32 = u32::try_from(buf_size)
-                .map_err(|_| io::Error::other("ETW properties buffer exceeds u32"))?;
-            let props_size_u32 =
-                u32::try_from(props_size).map_err(|_| io::Error::other("props size overflow"))?;
-            let mut buf = vec![0u8; buf_size];
-            let props = buf.as_mut_ptr() as *mut EVENT_TRACE_PROPERTIES;
-
-            (*props).Wnode.BufferSize = buffer_size_u32;
-            (*props).LoggerNameOffset = props_size_u32;
-
-            let name_ptr = buf.as_mut_ptr().add((*props).LoggerNameOffset as usize) as *mut u16;
-
-            name_ptr.copy_from_nonoverlapping(self.name_w.as_ptr(), self.name_w.len());
+            let stop_props = EtwPropsBuf::from_name_w(&self.name_w)?;
 
             let stop_status = ControlTraceW(
                 self.handle,
-                PCWSTR(name_ptr),
-                props,
+                stop_props.name_ptr(),
+                stop_props.props_ptr(),
                 EVENT_TRACE_CONTROL_STOP,
             );
+
             info!(
                 stop_control_trace_result = stop_status.0,
                 stop_control_trace_status = %format_win32_status(stop_status),
                 "ControlTraceW stop returned"
             );
+
             if stop_status != WIN32_ERROR(0) {
                 return Err(io::Error::other(format!(
                     "ControlTraceW stop failed: {}",
@@ -608,6 +670,42 @@ unsafe extern "system" fn etw_event_record_callback(event: *mut EVENT_RECORD) {
                 let _ = state.sender.send(RobloxAlert::SReady);
             }
         }
+    }
+}
+
+fn wait_for_etw_session_gone(name_ptr: *mut u16) {
+    use std::thread::sleep;
+    use std::time::Duration;
+
+    unsafe {
+        for _ in 0..20 {
+            let mut buf = vec![0u8; mem::size_of::<EVENT_TRACE_PROPERTIES>() + 256];
+            let props = buf.as_mut_ptr() as *mut EVENT_TRACE_PROPERTIES;
+
+            (*props).Wnode.BufferSize = buf.len() as u32;
+
+            let status = ControlTraceW(
+                CONTROLTRACE_HANDLE { Value: 0 },
+                PCWSTR(name_ptr),
+                props,
+                windows::Win32::System::Diagnostics::Etw::EVENT_TRACE_CONTROL_QUERY,
+            );
+
+            if status == WIN32_ERROR(4201) {
+                debug!("ETW session fully gone");
+                return;
+            }
+
+            trace!(
+                probe_status = status.0,
+                probe_status_text = %format_win32_status(status),
+                "ETW session still shutting down"
+            );
+
+            sleep(Duration::from_millis(50));
+        }
+
+        warn!("ETW session probe timed out waiting for teardown");
     }
 }
 

@@ -1,4 +1,4 @@
-#![windows_subsystem = "windows"]
+#![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 #![allow(non_snake_case)]
 
 pub mod components;
@@ -29,6 +29,21 @@ use windows::Win32::System::Diagnostics::ToolHelp::{
 };
 use windows::Win32::System::Threading::{OpenProcess, PROCESS_TERMINATE, TerminateProcess};
 use windows::core::PCWSTR;
+use windows::Win32::UI::WindowsAndMessaging::{
+    MessageBoxW, MB_ICONERROR, MB_OK
+};
+
+fn show_error(msg: &str) {
+    let wide: Vec<u16> = msg.encode_utf16().chain(Some(0)).collect();
+    unsafe {
+        MessageBoxW(
+            None,
+            PCWSTR(wide.as_ptr()),
+            PCWSTR(wide.as_ptr()),
+            MB_OK | MB_ICONERROR,
+        );
+    }
+}
 
 #[unsafe(no_mangle)]
 unsafe extern "system" fn TSRS_CALLBACK(_hinst: HINSTANCE, reason: u32, _reserved: *mut c_void) {
@@ -44,7 +59,9 @@ static TLS_ENTRY: unsafe extern "system" fn(HINSTANCE, u32, *mut c_void) = TSRS_
 fn main() {
     components::tracing::ArSetConsoleTracingMuted(true);
     ArSetConsoleTracingAnsi(true);
+
     ArEnsureWorkingDirectoryAtExeDir();
+    ArTracing();
 
     let _ = ArAccessCheck();
 
@@ -52,18 +69,10 @@ fn main() {
         Ok(c) => c,
         Err(e) => {
             error!("Initialization failed: {e}");
+            show_error(&format!("Initialization failed:\n{e}"));
             std::process::exit(1);
         }
     };
-
-    if cfg.general.require_rerun_after_setup {
-        if cfg.runtime.run_in_background {
-            eprintln!("Setup finished. Background mode was started via scheduled task.");
-        } else {
-            eprintln!("Setup finished. Re-run this executable to continue.");
-        }
-        std::process::exit(0);
-    }
 
     ArRunConfiguredEngine(cfg);
 }
@@ -87,7 +96,7 @@ pub(crate) fn ArRunConfiguredEngine(cfg: ArConfig) {
         components::tracing::ArSetConsoleTracingMuted(true);
         ArSetConsoleTracingAnsi(true);
     }
-    ArTracing();
+
     ArEnforceSingleInstance();
 
     let _veh_guard = components::VEH::ArVehGuard::start();
